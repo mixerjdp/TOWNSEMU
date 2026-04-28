@@ -1,5 +1,8 @@
 build*
 !build_vs.bat
+!buildlibretro32.bat
+!buildlibretro64.bat
+libretro-build/
 nobackup
 testc/WIN3.1/BOOT/STARTUP.EXE
 testc/WIN3.1/FPU/STARTUP.EXE
