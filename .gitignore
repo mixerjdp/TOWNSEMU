@@ -1,3 +1,8 @@
 build*
 !build_vs.bat
 nobackup
+testc/WIN3.1/BOOT/STARTUP.EXE
+testc/WIN3.1/FPU/STARTUP.EXE
+testc/WIN95/BOOT/STARTUP.EXE
+testc/WIN95/FPU/STARTUP.EXE
+run_qod.bat

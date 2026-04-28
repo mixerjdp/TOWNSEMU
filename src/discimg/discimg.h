@@ -325,7 +325,6 @@ public:
 private:
 	unsigned int OpenCHD(const std::string &fName);
 	unsigned int OpenCHDLibChdr(const std::string &fName);
-	unsigned int OpenCHDViaChdman(const std::string &fName);
 	bool ReadCHDRawSector(uint64_t rawSectorIndex,unsigned char *sector) const;
 	unsigned int OpenCUEPostProcess(void);
 	void MakeLayoutFromTracksAndBinaryFiles(void);
@@ -410,16 +409,6 @@ public:
 	static unsigned int BCDToBin(unsigned int bin);
 	inline static MinSecFrm MakeMSF(unsigned int min,unsigned int sec,unsigned int frm);
 };
-
-enum
-{
-	DISCIMG_CHD_LOAD_LIBCHDR,
-	DISCIMG_CHD_LOAD_CHDMAN,
-};
-
-void DiscImageSetCHDLoadMode(unsigned int mode);
-unsigned int DiscImageGetCHDLoadMode(void);
-
 inline DiscImage::MinSecFrm operator+(DiscImage::MinSecFrm l,DiscImage::MinSecFrm r)
 {
 	l+=r;

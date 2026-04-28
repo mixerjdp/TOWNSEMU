@@ -37,7 +37,6 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 
 
 static char skipBuf[4096];
-static unsigned int g_chdLoadMode=DISCIMG_CHD_LOAD_LIBCHDR;
 static bool g_discimgTrace=(nullptr!=std::getenv("TSUGARU_DISCIMG_TRACE"));
 
 #define DISCIMG_TRACE_LN(expr) do{ \
@@ -63,7 +62,6 @@ static const char *DiscImgTrackTypeName(unsigned int trackType)
 		return "UNKNOWN";
 	}
 }
-
 static const char *DiscImgLayoutTypeName(int layoutType)
 {
 	switch(layoutType)
@@ -80,7 +78,6 @@ static const char *DiscImgLayoutTypeName(int layoutType)
 		return "UNKNOWN";
 	}
 }
-
 static std::string DiscImgMSFToString(const DiscImage::MinSecFrm &msf)
 {
 	std::ostringstream oss;
@@ -694,10 +691,6 @@ unsigned int DiscImage::OpenCUE(const std::string &fName)
 }
 unsigned int DiscImage::OpenCHD(const std::string &fName)
 {
-	if(DISCIMG_CHD_LOAD_CHDMAN==g_chdLoadMode)
-	{
-		return OpenCHDViaChdman(fName);
-	}
 	return OpenCHDLibChdr(fName);
 }
 
@@ -941,51 +934,6 @@ unsigned int DiscImage::OpenCHDLibChdr(const std::string &fName)
 			<< " sectors=" << chdTrk.sectors);
 	}
 	return ERROR_NOERROR;
-}
-
-unsigned int DiscImage::OpenCHDViaChdman(const std::string &fName)
-{
-	CleanUp();
-
-	std::filesystem::path tempDir;
-	if(false==CreateUniqueTempDirectory(tempDir))
-	{
-		return ERROR_CANNOT_OPEN;
-	}
-
-	auto cuePath=tempDir/"disc.cue";
-	auto chdmanExe=std::string("chdman.exe");
-	if(false==cpputil::FileExists(chdmanExe))
-	{
-		std::error_code ec;
-		std::filesystem::remove_all(tempDir,ec);
-		return ERROR_CANNOT_OPEN;
-	}
-
-	auto command=QuoteForCommandLine(chdmanExe);
-	command+=" extractcd -i ";
-	command+=QuoteForCommandLine(fName);
-	command+=" -o ";
-	command+=QuoteForCommandLine(cuePath.string());
-	command+=" -f";
-
-	int rc=RunCommandAndWait(command,std::filesystem::current_path());
-	if(0!=rc || false==cpputil::FileExists(cuePath.string()))
-	{
-		std::error_code ec;
-		std::filesystem::remove_all(tempDir,ec);
-		return ERROR_CANNOT_OPEN;
-	}
-
-	temporaryImageDir=tempDir.string();
-	preserveTemporaryImageDir=true;
-	auto err=OpenCUE(cuePath.string());
-	preserveTemporaryImageDir=false;
-	if(ERROR_NOERROR!=err)
-	{
-		CleanUp();
-	}
-	return err;
 }
 unsigned int DiscImage::OpenCUEPostProcess(void)
 {
@@ -2467,21 +2415,4 @@ DiscImage::TrackTime DiscImage::DiscTimeToTrackTime(MinSecFrm discMSF) const
 	}
 	msf.frm=cpputil::Atoi(str);
 	return true;
-}
-
-void DiscImageSetCHDLoadMode(unsigned int mode)
-{
-	if(DISCIMG_CHD_LOAD_CHDMAN==mode)
-	{
-		g_chdLoadMode=DISCIMG_CHD_LOAD_CHDMAN;
-	}
-	else
-	{
-		g_chdLoadMode=DISCIMG_CHD_LOAD_LIBCHDR;
-	}
-}
-
-unsigned int DiscImageGetCHDLoadMode(void)
-{
-	return g_chdLoadMode;
 }

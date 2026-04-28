@@ -155,8 +155,6 @@ void TownsARGV::PrintHelp(void) const
 	std::cout << "  Repeat -CDPATH path1 -CDPATH path2 ... to specify multipl paths." << std::endl;
 	std::cout << "-CDSPEED N" << std::endl;
 	std::cout << "  Set CD speed.  CD speed will be set to Nx." << std::endl;
-	std::cout << "-CHDMAN" << std::endl;
-	std::cout << "  Use chdman.exe extraction for CHD images instead of built-in libchdr." << std::endl;
 	std::cout << " -NOINTCD\n";
 	std::cout << "  Virtually remove internal CD drive (Keep ready signal on I/O 4C0h zero.)\n";
 	std::cout << "-ICM image-file-name" << std::endl;
@@ -743,10 +741,6 @@ bool TownsARGV::AnalyzeCommandParameter(int argc,char *argv[])
 		{
 			cdSpeed=cpputil::Atoi(argv[i+1]);
 			++i;
-		}
-		else if("-CHDMAN"==ARG)
-		{
-			DiscImageSetCHDLoadMode(DISCIMG_CHD_LOAD_CHDMAN);
 		}
 		else if("-NOINTCD"==ARG)
 		{
