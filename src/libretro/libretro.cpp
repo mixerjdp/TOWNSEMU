@@ -109,6 +109,11 @@ bool is_floppy_extension(const std::string &ext)
 	       "img" == ext || "fdi" == ext;
 }
 
+unsigned int cmos_index_from_io(unsigned int ioport)
+{
+	return (ioport - TOWNSIO_CMOS_BASE) / 2;
+}
+
 void log(enum retro_log_level level, const char *message)
 {
 	if(nullptr != log_cb)
@@ -154,10 +159,28 @@ public:
 	void Interval(void) override
 	{
 		BaseInterval();
+		ImportMostRecentImage();
 	}
-	void Render(bool) override {}
+	void Render(bool) override
+	{
+		Interval();
+	}
 	void Communicate(Outside_World *) override {}
 	void UpdateImage(TownsRender::ImageCopy &img) override
+	{
+		ImportImage(img);
+	}
+
+	void ImportMostRecentImage()
+	{
+		if(true == winThr.newImageRendered)
+		{
+			ImportImage(winThr.mostRecentImage);
+			winThr.newImageRendered = false;
+		}
+	}
+
+	void ImportImage(const TownsRender::ImageCopy &img)
 	{
 		if(0 == img.wid || 0 == img.hei || img.rgba.size() < img.wid * img.hei * 4)
 		{
@@ -183,6 +206,7 @@ public:
 
 	bool CopyFrame(std::vector<uint32_t> &out,unsigned &wid,unsigned &hei)
 	{
+		Interval();
 		std::lock_guard<std::mutex> lock(frameLock);
 		if(true != haveFrame || true == xrgb.empty())
 		{
@@ -373,6 +397,8 @@ public:
 	Outside_World::Sound *sound = nullptr;
 	std::thread vmThread;
 	bool loaded = false;
+	bool contentIsCD = false;
+	bool contentIsFD = false;
 
 	~Runtime()
 	{
@@ -385,6 +411,8 @@ public:
 		content_path = (nullptr != game && nullptr != game->path) ? game->path : "";
 
 		TownsStartParameters argv;
+		contentIsCD = false;
+		contentIsFD = false;
 		argv.ROMPath = PreferredRomPath();
 		argv.CMOSFName = join_path(PreferredSavePath(), "tsugaru_cmos.bin");
 		argv.autoSaveCMOS = true;
@@ -404,10 +432,17 @@ public:
 		if(true == is_cd_extension(ext))
 		{
 			argv.cdImgFName = content_path;
+			argv.bootKeyComb = BOOT_KEYCOMB_CD;
+			argv.townsType = TOWNSTYPE_2_MX;
+			argv.memSizeInMB = 16;
+			argv.useFPU = true;
+			contentIsCD = true;
 		}
 		else if(true == is_floppy_extension(ext) || true != content_path.empty())
 		{
 			argv.fdImgFName[0] = content_path;
+			argv.bootKeyComb = BOOT_KEYCOMB_F0;
+			contentIsFD = true;
 		}
 
 		outside = std::make_unique<LibretroOutsideWorld>();
@@ -425,6 +460,7 @@ public:
 			log(RETRO_LOG_ERROR, "Tsugaru libretro: failed to set up FM Towns VM.\n");
 			return false;
 		}
+		ConfigureBootDevice();
 
 		townsThread = std::make_unique<TownsThread>();
 		townsThread->SetRunMode(TownsThread::RUNMODE_RUN);
@@ -472,6 +508,8 @@ public:
 		towns.reset();
 		outside.reset();
 		loaded = false;
+		contentIsCD = false;
+		contentIsFD = false;
 	}
 
 	bool CopyFrame(std::vector<uint32_t> &out,unsigned &wid,unsigned &hei)
@@ -509,6 +547,26 @@ public:
 		std::error_code ec;
 		std::filesystem::create_directories(path, ec);
 		return path;
+	}
+
+	void ConfigureBootDevice()
+	{
+		if(nullptr == towns)
+		{
+			return;
+		}
+		if(true == contentIsCD)
+		{
+			towns->physMem.state.CMOSRAM[cmos_index_from_io(TOWNSIO_CMOS_DEF_BOOT_DEV_TYPE)] = 8;
+			towns->physMem.state.CMOSRAM[cmos_index_from_io(TOWNSIO_CMOS_DEF_BOOT_DEV_UNIT)] = 0;
+			towns->physMem.state.CMOSRAM[cmos_index_from_io(TOWNSIO_CMOS_BOOT_DEV)] = 0x80;
+		}
+		else if(true == contentIsFD)
+		{
+			towns->physMem.state.CMOSRAM[cmos_index_from_io(TOWNSIO_CMOS_DEF_BOOT_DEV_TYPE)] = 2;
+			towns->physMem.state.CMOSRAM[cmos_index_from_io(TOWNSIO_CMOS_DEF_BOOT_DEV_UNIT)] = 0;
+			towns->physMem.state.CMOSRAM[cmos_index_from_io(TOWNSIO_CMOS_BOOT_DEV)] = 0x20;
+		}
 	}
 };
 
