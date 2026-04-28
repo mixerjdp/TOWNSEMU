@@ -12,6 +12,7 @@ target_link_libraries(tsugaru_libretro
 	outside_world
 	discimg
 	diskdrive
+	yssimplesound_nownd
 )
 
 target_include_directories(tsugaru_libretro

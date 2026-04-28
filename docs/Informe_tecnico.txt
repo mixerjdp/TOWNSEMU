@@ -1,0 +1,203 @@
+Informe técnico para crear un core libretro de FM Towns
+Resumen ejecutivo
+La ruta técnicamente más sólida para crear un core dedicado de FM Towns para RetroArch es envolver un backend existente y especializado, no empezar desde MAME ni reescribir el sistema desde cero. En la práctica, la mejor base es Tsugaru, el emulador abierto de FM Towns/Marty de Soji Yamakawa[1]: está dedicado al hardware objetivo, tiene licencia BSD de 3 cláusulas, publica instrucciones de compilación, documenta varias rarezas del sistema y ya incorpora ecosistema propio de ROM/OS compatibles. MAME sigue siendo indispensable como oráculo de comportamiento y como ruta de compatibilidad inmediata dentro de RetroArch, pero como base para un core dedicado implica una huella de código mayor, integración más costosa y un marco de distribución global bajo GPL-2.0+ a nivel proyecto. [2]
+El reto real no es “emular un 386”, sino capturar las particularidades de FM Towns que más rompen un port ingenuo a libretro: video con sprites dibujados directo a VRAM, CRTC y puertos de video poco documentados, mezcla de FM/PCM/CD-DA, CD-ROM interno con protocolo propietario y llamadas BIOS específicas, banca ROM/RAM/CMOS controlada por puertos, diferencias entre revisiones/modelos, y un mouse tipo MSX que reporta desplazamiento relativo y no coordenadas absolutas. Además, el propio ecosistema Towns OS tiene detalles prácticos como caché del drive de arranque y diferencias entre versiones V1.1 y V2.1, que afectan swaps de medios y pruebas de arranque. [3]
+La recomendación de producto para una versión inicial es un core por software con estas metas: arranque de ROM/BIOS desde la carpeta system, carga de contenido mediante un manifiesto de varias piezas, soporte de CD .iso/.cue/.mds, floppy crudo o .d77, HDD/CMOS persistentes en save, control de discos vía la interfaz extendida de libretro donde aplique, mapa completo de teclado y mouse, y save states deterministas solo cuando ya estén serializados CD, audio y controladores. Para reducir fricción legal, el core debe aceptar dumps del usuario y, como ruta opcional, soportar las ROM/OS compatibles de los proyectos TOWNSROM y FreeTOWNSOS, no redistribuir ROMs propietarias de Fujitsu[4]. [5]
+Alcance y conclusión arquitectónica
+El archivo de referencia adjunto apunta a una estructura de porting libretro muy clásica —separar backend y frontend, exponer callbacks de video/audio/input y añadir una receta de build dedicada—, y ese patrón coincide tanto con la documentación oficial de desarrollo de libretro como con cores de computadoras de discos ya establecidos, como PX68k. La validación de este informe es documental y de arquitectura: cada decisión está trazada contra la API de libretro, repositorios originales del emulador y documentación técnica del FM Towns; no sustituye una corrida de CI ni una compilación ejecutada durante esta sesión. fileciteturn0file0 [6]
+La decisión arquitectónica puede resumirse así. Si el objetivo es un core mantenible, relativamente pequeño y con identidad propia, conviene partir de Tsugaru CUI, retirar GUI/depuración interactiva y montar un wrapper libretro delgado. Si el objetivo es tener FM Towns hoy mismo en RetroArch con el menor trabajo de ingeniería, la vía práctica ya existente es usar el core libretro de MAME, que hereda el driver fmtowns.cpp de Barry Rodewald[7]. Y si el objetivo fuera un producto “desde cero”, la realidad documental del sistema sugiere limitar ese esfuerzo a un subconjunto de hardware —por ejemplo, un perfil Marty o Towns temprano— porque hay comportamiento que sigue dependiendo de documentación dispersa y reverse engineering. [8]
+La documentación oficial de Libretro describe un flujo donde el core expone metadatos del sistema, carga contenido, reporta con precisión FPS/tasa de audio y ejecuta exactamente un frame lógico por llamada a retro_run(). También deja claro que el frontend, no el core, es quien debe gobernar la sincronización temporal; en consecuencia, cualquier backend FM Towns portado a libretro debe retirar sleep(), timers host-dependientes y loops de espera externos al scheduler emulado. [9]
+flowchart LR
+    RA[Frontend RetroArch]
+    CONTENT[Manifiesto .cmd o .m3u<br/>CD / FDD / HDD / CMOS]
+    SYS[system/<br/>ROM y BIOS]
+    SAVE[save/<br/>CMOS, NVRAM, discos de usuario]
+    CORE[fmtowns_libretro]
+    WRAP[Wrapper libretro]
+    ENG[Backend de emulación]
+    CPU[x86 + PIC/PIT/DMAC]
+    VID[CRTC + VRAM + sprites + texto]
+    AUD[FM + PCM + CD-DA]
+    IO[FDD + HDD + SCSI/CD + BIOS]
+    INP[Teclado + mouse + RetroPad]
+
+    RA -->|callbacks| CORE
+    CONTENT --> CORE
+    SYS --> CORE
+    SAVE --> CORE
+    CORE --> WRAP
+    WRAP --> ENG
+    ENG --> CPU
+    ENG --> VID
+    ENG --> AUD
+    ENG --> IO
+    WRAP --> INP
+    WRAP -->|video_cb| RA
+    WRAP -->|audio_batch_cb| RA
+    WRAP -->|disk control / serialize / memory| RA
+Esa topología es la recomendable porque mantiene las fronteras limpias: el backend emula la máquina; el wrapper resuelve la semántica libretro; y RetroArch maneja ciclo de vida, presentación, rutas, discos y experiencia de usuario. El precedente oficial del ecosistema también ayuda: la lista de cores de Libretro incluye tanto el core genérico de MAME como forks de un solo sistema derivados de bases más grandes, como SAME CDi. En otras palabras, el modelo de “framework amplio” y el modelo de “core enfocado en una sola máquina” ya conviven en la infraestructura oficial. [10]
+Particularidades del hardware y del software de FM Towns
+El FM Towns nació como plataforma x86 no-PC compatible de consumo, con modelos iniciales 80386DX y evolución posterior a 386SX, 486 y Pentium; MAME también registra la presencia opcional de coprocesador 80387 en la etapa temprana. Esa variabilidad importa porque no conviene congelar el core a “un solo Towns” sin una estrategia explícita de modelo: hay diferencias de CPU, RAM máxima, dispositivos y extensiones de audio/video entre familias. [11]
+La capa de video tampoco se parece a una consola 2D típica. El driver de MAME resume un sistema de video custom con 16 o 256 colores desde una paleta de 24 bits o modo high-color de 15 bits, además de 1024 sprites de 16×16 y texto de 16 colores renderizados directamente a VRAM. El databook técnico describe 512 KB de VRAM divididos en cuatro páginas/bancos de 128 KB. La consecuencia práctica es importante: un core FM Towns no debería tratar sprites, texto y framebuffers como subsistemas independientes “tipo tilemap puro”, sino como productores de escrituras y lecturas sobre VRAM que deben converger con exactitud de timing y de prioridad. [12]
+En audio, las fuentes consultadas dibujan una ruta mixta y modelodependiente. El databook técnico cataloga chips FM de la familia YM2612, mientras que MAME modela el sistema base con YM3438 y anota variantes posteriores YMF276; ambas fuentes coinciden en la presencia de PCM RF5C68 y de reproducción CD-DA, y MAME añade que algunos modelos tardíos incorporan PCM/ADPCM de 16 bits adicional. Para el port, eso significa que la mezcla no puede reducirse a “FM + samples”: el pipeline debe contemplar, como mínimo, FM, PCM y audio del CD como tres dominios distintos con IRQs y latencias propias, y dejar el audio tardío como opción/modelo, no como supuesto universal. [13]
+El almacenamiento y la BIOS son donde FM Towns más se aparta de una integración fácil. El manual y las páginas técnicas de YSFlight documentan llamadas BIOS INT 93h relacionadas con estado de medios, cambio de disco y volumen eléctrico del CD-ROM; además, el proyecto Free FM TOWNS explica que el CD-ROM interno era propietario, previo a la estandarización posterior de buses/mandatos de unidades ópticas, lo que complica tanto la sustitución en hardware real como la emulación de bajo nivel. A nivel de imagen, Tsugaru soporta .iso, .cue y .mds para CD, y recomienda .mds cuando hay pistas de audio; también soporta floppy en binario crudo o .d77. Esa recomendación no es cosmética: el propio autor subraya que la interpretación del PREGAP en .cue es ambigua desde el punto de vista de preservación. [14]
+En mapa de memoria y puertos, hay dos detalles que impactan directo en save states y depuración. MAME marca 0x0404 como control para deshabilitar VRAM/CMOS/MMIO mapeados en memoria baja, y el README de Tsugaru analiza el puerto 0x0480 como selector entre ROM del sistema, RAM y CMOS, proponiendo una interpretación práctica del mapeo entre F0000-FFFFF y D0000-DFFFF. No hace falta que la primera versión del core ofrezca un monitor de memoria público, pero sí debe tener estas transiciones perfectamente serializadas y trazables, porque afectan arranque, pruebas de BIOS y reanudación de estado. [15]
+El input también trae una rareza importante: Tsugaru documenta que el FM Towns usa mouse tipo MSX, que envía desplazamientos X/Y y no conoce su posición absoluta. Por eso mismo el autor tuvo que reverse-engineerear posiciones de cursor en varias revisiones de TBIOS para lograr integración host↔guest. En un core libretro, esto obliga a priorizar la semántica de mouse relativo y dejar la emulación de puntero absoluto como una capa opcional de “mouse integrado”, no como comportamiento base. [16]
+Finalmente, Towns OS arrastra peculiaridades operativas que sí afectan validación. Las notas de YSFlight describen caché del drive de sistema y diferencias de detección entre Towns OS V1.1 y V2.1; FreeTOWNSROM también lista un caso real donde un juego falla al abrir un archivo si intenta hacerlo mientras CDDA sigue sonando. Estas dos observaciones son oro para el diseño del core: primero, el cambio de medio debe propagar correctamente el estado de “media changed”; segundo, save states y swaps no pueden ignorar el estado del stream CDDA. [17]
+Arquitectura de RetroArch/libretro y puntos de integración
+La documentación oficial de desarrollo de cores y el encabezado canónico libretro.h dejan bastante claro qué piezas debe tocar un core de FM Towns. Debe definir el ciclo completo de callbacks (retro_set_*, retro_get_system_info, retro_load_game, retro_get_system_av_info, retro_run, retro_unload_game), registrar las opciones del core lo más temprano posible, reportar con precisión formato de pixel, FPS, sample rate e intensidad de cómputo, y evitar patrones de sincronización basados en tiempo real del host. Para un sistema como FM Towns, esos requisitos no son burocracia: son la diferencia entre audio estable, VSync correcto y save states reproducibles. [18]
+La decisión más importante de carga de contenido es usar need_fullpath = true en la primera versión del core. La razón es simple: FM Towns rara vez vive cómodo dentro del modelo “un solo archivo precargado en RAM”; necesita combinar ROMs/BIOS, CMOS persistente, uno o varios CD, disquetes y, con frecuencia, un HDD o disco de usuario. La propia guía oficial de libretro explica que need_fullpath es el modo apropiado cuando el engine necesita abrir archivos auxiliares por ruta, y la guía de swap de discos recomienda .m3u para listas de multi-CD. Para FM Towns, yo usaría .m3u para CD-only y un manifiesto de texto estilo .cmd para escenarios mixtos CD+FDD+HDD, siguiendo el precedente de PX68k, que ya acepta un cmdfile para pasar varios medios al core. [19]
+El punto de integración de video debe partir en software rendering con RETRO_ENVIRONMENT_SET_PIXEL_FORMAT y framebuffer en 32 bits. El encabezado canónico recuerda que el formato por defecto 0RGB1555 existe por compatibilidad, pero no es la opción recomendable para un core nuevo; en un sistema que usa paleta de 24 bits y high-color de 15 bits, un backend XRGB8888 o equivalente simplifica conversiones, debugging y dumps de cuadro. La aceleración por hardware puede llegar después, pero no debería bloquear la primera versión. [20]
+En input, el core debe registrar descriptores (RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS) y un keyboard callback (RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK) porque FM Towns es, ante todo, una computadora japonesa; reducirlo solo a RetroPad sería una pérdida de funcionalidad. La frontera recomendada es tripartita: teclado para Towns OS y juegos con texto, mouse relativo para software que usa el dispositivo tipo MSX, y RetroPad como capa de conveniencia para títulos compatibles con pad/Marty o para atajos del frontend. [21]
+El swap de medios debe implementarse con la interfaz de discos extendida, no solo con la antigua. El encabezado de libretro depreca la interfaz clásica frente a la extendida, y PX68k demuestra una implementación real que negocia la versión disponible y registra callbacks de eject, indexado, path y etiqueta de imagen. Para FM Towns, esto sirve para CDs multi-disco, pero también conviene duplicar el patrón para floppies, ya sea tratando el drive activo como unidad intercambiable o exponiendo el selector de drive como core option. [22]
+Los save states deben tratarse como hito de segunda fase, no como casilla fácil de marcar. Libretro los considera básicos para rewind y muy valiosos para netplay; pero en un equipo como FM Towns eso implica serializar CPU, PIC/PIT/DMAC, CRTC, VRAM, paletas, controladores de disquete, SCSI/CD, estado de pista/sector/CDDA, CMOS, RAM y toda señal de “media changed” o IRQ pendiente. Si cualquiera de esas piezas queda fuera, el core puede “guardar” estado y aun así reanudar con audio roto, cursor incoherente o BIOS desincronizada. [23]
+Un punto de integración extra, fácil de pasar por alto, es exponer memoria al frontend cuando el core ya sea estable. libretro.h contempla RAM del sistema y VRAM como tipos de memoria visibles al frontend. Para FM Towns esto ayuda mucho a depuración, monitoreo y herramientas externas, pero solo conviene activarlo cuando el mapa de memoria y los cambios de banca en 0x0404/0x0480 estén suficientemente depurados. [24]
+Evaluación de emuladores base y elección recomendada
+La comparación relevante no es solo entre “qué emula mejor”, sino entre qué puede convertirse en un core libretro mantenible con el menor riesgo de integración. Las cuatro rutas útiles son Tsugaru como base dedicada, el driver fmtowns.cpp dentro de MAME, el core libretro de MAME como solución inmediata dentro de RetroArch y UNZ como referencia histórica de compatibilidad pero sin base pública de código para adaptación. La tabla sintetiza esas rutas con base en repositorios y documentación oficiales. [25]
+Opción	Tipo	Licencia	Lenguajes visibles	Ventajas para un core FM Towns	Bloqueadores principales	Veredicto
+captainys/TOWNSEMU	Emulador dedicado FM Towns/Marty	BSD-3-Clause	C++, C, Assembly, CMake, Python, Makefile	Base enfocada, documentación propia de rarezas Towns, build público, ecosistema TOWNSROM/FreeTOWNSOS, soporte de formatos ópticos y floppy ya definido	Hay que separar GUI/CUI, quitar dependencias no-libretro y diseñar manifiesto de varios medios	Ruta recomendada
+mamedev/mame + fmtowns.cpp	Framework multipropósito con driver FM Towns	GPL-2.0+ a nivel proyecto; muchos archivos BSD	C++ dominante, más C/Lua/Python/otros	Driver ya existente, útil como oráculo de comportamiento, integración inmediata con core MAME	Huella enorme, acoplamiento alto, identidad de core poco enfocada, costo de mantenimiento/licencia mayor	Ruta secundaria
+libretro/mame	Core libretro genérico	Arrastra la base MAME	Hereda MAME	Ya funciona como vía RetroArch para hardware soportado por MAME	No es core dedicado; UX, opciones y desempeño quedan subordinados al core global	Solución inmediata, no producto final
+UNZ	Emulador histórico de alta compatibilidad	Freeware/no fuente pública	N/D	Referencia de compatibilidad y de ROM set compatible	No hay base pública de código para port/libretro	No adaptable
+La conclusión es directa. Tsugaru es la mejor base para un core dedicado, y MAME debe quedar como referencia externa para pruebas y regresión. El hecho de que el autor de Tsugaru publique además TOWNSROM y FreeTOWNSOS es particularmente valioso: da una ruta legal y autocontenible para arranque y pruebas que MAME, por sí mismo, no resuelve. [26]
+También conviene observar la experiencia del ecosistema. PX68k ya resuelve, dentro de libretro, varios problemas análogos a los de FM Towns: estructura separada de wrapper libretro.c, Makefile.libretro, opciones del core, carga por archivo de comandos y bridge de swap de discos. Y la lista oficial de cores demuestra que Libretro admite tanto el enfoque “framework general” como el de “core de un solo sistema”, con MAME y SAME CDi coexistiendo en la misma biblioteca. [27]
+Antes de entrar al paso a paso, conviene fijar las dependencias mínimas y recomendadas. La tabla siguiente mezcla dependencias confirmadas por los proyectos con dependencias recomendadas de diseño para que el port quede limpio desde la primera iteración. El esfuerzo y el carácter “obligatorio/recomendado” en varios renglones es una estimación de ingeniería propia, no una cita textual. [28]
+Dependencia	Tipo	Estado	Razón técnica
+Compilador C/C++ moderno + CMake	Build	Obligatoria	Tsugaru ya publica build con CMake; conservarlo facilita seguir upstream
+libretro.h y libretro-common	Integración	Obligatoria	Son la base canónica del API, callbacks, utilidades y portabilidad
+Makefile.libretro	Build/distribución	Obligatoria	Es el patrón estándar para compilar el core en la infraestructura libretro
+Backend Tsugaru sin GUI	Arquitectura	Obligatoria	El core debe depender del engine, no de la interfaz standalone
+Repositorio captainys/public	GUI	Evitable	Tsugaru lo pide para la GUI; un core dedicado debería eliminar esta dependencia
+Parser de manifiesto .cmd y/o .m3u	Carga de contenido	Obligatoria	FM Towns necesita montar varios medios por sesión
+Soporte de CD .iso/.cue/.mds y floppy crudo/.d77	Medios	Obligatoria	Son los formatos explícitamente descritos por Tsugaru
+Persistencia de CMOS/NVRAM/discos de usuario	Estado	Obligatoria	Sin esto el core será frágil para Towns OS y juegos con save disk
+Resampler/mixer para FM+PCM+CDDA	Audio	Obligatoria	FM Towns no es monocanal de audio ni una sola fuente
+CI cruzado (desktop + Android)	Entrega	Recomendada desde temprano	Evita que el wrapper libretro se descomponga entre plataformas
+Soporte opcional de TOWNSROM/FreeTOWNSOS	Licencias/pruebas	Muy recomendable	Reduce fricción legal y facilita pruebas automatizables
+Implementación paso a paso
+La tabla siguiente propone un checklist documentalmente validado contra la API de libretro, la estructura de Tsugaru y precedentes como PX68k. Las estimaciones son mías y asumen una persona con experiencia media-alta en C/C++, emulación y build systems. [29]
+Paso	Entregable	Señal de validación	Esfuerzo estimado
+Selección de base y congelamiento de alcance	Rama fmtowns-libretro + documento de alcance por modelo	Aprobación de “modelo v1”, lista de formatos y ROM policy	1–2 días
+Separación backend/frontend	Librería towns_core sin GUI ni audio/video host	Compila sin captainys/public ni ventanas propias	3–6 días
+Wrapper libretro mínimo	libretro.cpp/Makefile.libretro/opciones básicas	RetroArch carga el core y muestra metadatos	2–4 días
+Rutas, BIOS y manifiesto de contenido	Carga desde system, save y archivo .cmd/.m3u	El core abre ROM, CMOS y al menos un CD o floppy	3–5 días
+Arranque Towns OS / FreeTOWNSOS	Boot funcional hasta shell o menú	Towns OS y/o FreeTOWNSOS llegan a prompt	3–7 días
+Video, CRTC y VRAM	Framebuffer estable	Sin tearing lógico; menús BIOS/Towns OS visibles y coherentes	4–8 días
+Audio FM/PCM/CDDA	Mezcla estable y sincronizada	BGM/SFX/CDDA audibles sin desbordes ni drift evidente	4–8 días
+Input completo	Teclado, mouse relativo y RetroPad configurables	Cursor usable; juegos con pad responden; texto entra bien	3–6 días
+Save states y sincronización	serialize/unserialize confiables	Reanuda sin perder CDDA, IRQs ni medios montados	5–10 días
+Cross-compilación y empaquetado	Builds desktop/Android/macOS + .info	Binarios en cores/, info matching y smoke tests verdes	4–8 días
+Integración con infraestructura libretro	Receta/CI/documentación	Build reproducible y guía de instalación completa	3–5 días
+El primer trabajo real es extraer el backend de Tsugaru. El árbol del proyecto muestra carpetas separadas para GUI, src, utilidades, datos de prueba y herramientas, mientras que las instrucciones de build publicadas clonan captainys/public desde gui/src para compilar la interfaz. Para un core libretro, la meta correcta es añadir una opción de build como BUILD_LIBRETRO=ON y otra BUILD_GUI=OFF, construir una librería estática o de objetos con CPU/dispositivos/medios y dejar fuera ventanas, menús, audio de host, file pickers y debugger interactivo. [30]
+La salida deseable de ese paso es una estructura parecida a esta, que no copia tal cual a Tsugaru ni a PX68k, pero sí sigue el patrón que ambos sugieren: engine abajo, wrapper arriba y build separado para libretro. [31]
+fmtowns-libretro/
+  core/
+    cpu/
+    video/
+    audio/
+    storage/
+    bios/
+    scheduler/
+  libretro/
+    libretro.cpp
+    libretro_core_options.h
+    content_manifest.cpp
+    disk_control.cpp
+    input_bridge.cpp
+    audio_bridge.cpp
+    serialize.cpp
+  build/
+    CMakeLists.txt
+    Makefile.libretro
+    ci/
+  docs/
+    firmware.md
+    formats.md
+El segundo paso es el wrapper libretro mínimo. Aquí hay que implementar los callbacks obligatorios, registrar opciones del core en retro_set_environment, definir rutas a system y save, fijar formato de pixel y declarar extensiones válidas. La guía de desarrollo y libretro.h indican además que retro_run() debe avanzar exactamente un frame lógico por invocación y que los callbacks de input deben llamarse al menos una vez por frame. En otras palabras: el wrapper no “maneja” la máquina, solo la conduce. [32]
+La decisión más importante en carga de contenido es no depender solo del archivo principal. FM Towns necesita varios medios vivos a la vez, así que la recomendación es aceptar dos rutas. Ruta estándar: .m3u para juegos multi-CD convencionales y exposiciones a la interfaz de swap oficial. Ruta FM Towns: un manifiesto propio, por ejemplo .cmd, igual que PX68k, para sesiones mixtas. Ese manifiesto debería permitir algo tan simple como lo siguiente. La sintaxis exacta es una propuesta de diseño, pero la necesidad del archivo-maniesto sí está justificada por la naturaleza del sistema y por el precedente de PX68k. [33]
+romdir=system/fmtowns/rom_mx
+model=mx
+cd=media/game.mds
+fd0=media/userdisk.d77
+hdd0=media/save.h0
+cmos=saves/profile_cmos.bin
+boot=cd
+Después viene el camino de arranque, donde conviene validar primero la ruta legal y autocontenible antes que la propietaria. TOWNSROM documenta un reemplazo libre de FMT_SYS.ROM, y FreeTOWNSOS publica imágenes de floppy y HDD de un sistema operativo compatible, además de notar que puede arrancar desde imagen de disco o HDD virtual dentro de Tsugaru. Eso permite una primera meta objetiva: lograr boot con ROM/OS libres antes de perseguir cada variante propietaria de Towns OS. Cuando esa ruta ya sea estable, entonces se agrega soporte a ROMs originales del usuario. [34]
+El siguiente bloque crítico es el de video y CRTC. MAME enumera puertos de video alrededor de 0x0400 y 0x0440-0x045f, y documenta IRQ11 como VSync; el databook, por su lado, describe una organización de VRAM por páginas. En la práctica, el wrapper debe pedir un framebuffer en 32 bits, mantener dirty tracking por VRAM/paleta/registro de CRTC y producir un frame final una sola vez por retro_run(). La tentación de cachear demasiado el camino de sprites debe evitarse: en Towns los sprites van directo a VRAM y conviven con texto y páginas de video, así que conviene tratar VRAM como fuente de verdad. [35]
+El bloque de audio exige más disciplina de la que parece. La recomendación concreta es mantener mezcladores lógicos separados para FM, PCM y CDDA, y solo juntarlos en una etapa final de resampleo/mezcla antes de llamar audio_batch_cb. Tsugaru recomienda .mds cuando hay audio de CD; TOWNSROM documenta un bug/edge case real asociado a abrir archivos sin detener primero CDDA; y MAME separa las fuentes de sonido al nivel del modelo. La lección de ingeniería es clara: el estado del CD no es externo ni decorativo; debe formar parte del estado de audio emulado. [36]
+El bloque de input debe resolver tres cosas al mismo tiempo. Primero, teclado completo con callback oficial de libretro para Towns OS y software que escribe texto. Segundo, mouse relativo como primera clase, porque FM Towns usa un dispositivo estilo MSX basado en desplazamiento. Tercero, un mapa de RetroPad conveniente para juegos compatibles con pad o para un modo “consola”. Yo expondría por opción del core al menos: mouse_mode = relative|integrated, joypad_mode = off|marty|keyboard-emulated, y model = auto|1/2|marty|mx. [37]
+El bloque más delicado es save states y sincronización. La guía de libretro enfatiza que FPS y sample rate deben ser exactos y que el frontend controla la sincronía; la documentación de netplay explica además por qué la serialización es tan importante para rewind y reejecución. Un save state de FM Towns no es solo CPU+RAM: debe incluir bancos de memoria, CRTC, VRAM/paletas, colas de audio, estado de track/sector del CD, flags de cambio de medio, IRQ pendientes y cursores/estado de mouse. Si el equipo no quiere asumir toda esa serialización en la primera entrega, la decisión correcta es desactivar save states al principio y activarlos cuando pasen pruebas de round-trip. [38]
+En cross-compilación, la estrategia recomendable es híbrida. Mantener CMake para desarrollo nativo porque ya es natural en Tsugaru, y añadir Makefile.libretro para la infraestructura del core. PX68k provee un muy buen ejemplo de Makefile.libretro con bloques por plataforma que generan .so, .dylib o binarios de Android/iOS/tvOS según platform; además, libretro-super sigue siendo el superproyecto oficial para fetch/build/install y para recetas de compilación cruzada. En orden de prioridad, yo liberaría: Linux/macOS/Windows primero, Android arm64 después y Apple móvil solo cuando el wrapper ya no dependa de nada fuera del engine. [39]
+Si alguien insiste en la ruta desde cero, mi recomendación profesional es acotarla a un objetivo didáctico o a una meta de preservación muy específica. El plan mínimo sería: arrancar con un perfil 386SX/386DX temprano, implementar mapa de memoria y puertos críticos (0x0404, 0x0480, CRTC, FDC, CD), conseguir boot de BIOS, luego Towns OS, luego video correcto, luego audio, y solo al final variantes de modelo y save states. La combinación de CD propietario, comportamiento BIOS específico y diferencias por revisión hace que esta ruta sea mucho más larga y arriesgada que reutilizar Tsugaru. [40]
+flowchart TD
+    A[Semana 1<br/>Congelar alcance y extraer backend]
+    B[Semana 2<br/>Wrapper libretro mínimo y rutas]
+    C[Semana 3<br/>Manifiesto de contenido y boot libre]
+    D[Semana 4<br/>Video, CRTC y VRAM]
+    E[Semana 5<br/>FM, PCM y CDDA]
+    F[Semana 6<br/>Teclado, mouse y RetroPad]
+    G[Semana 7<br/>Save states y regresiones]
+    H[Semana 8<br/>Cross-build, empaquetado y docs]
+
+    A --> B --> C --> D --> E --> F --> G --> H
+Pruebas, validación y depuración
+La validación correcta de un core FM Towns debe apoyarse en tres oráculos: una ruta libre/autocontenible con TOWNSROM/FreeTOWNSOS, el comportamiento del backend base (Tsugaru) y el comportamiento alterno del driver de MAME. Con eso se puede distinguir si un bug viene del wrapper libretro, del backend, o de una zona del hardware todavía no bien documentada. [41]
+La tabla de pruebas siguiente prioriza casos que no dependen de redistribuir software propietario. Donde se usen Towns OS o juegos comerciales, la recomendación es explícita: solo dumps/imágenes del propio usuario. Las expectativas debajo de “resultado esperado” son una mezcla de evidencia en fuentes y criterio de validación recomendado. [42]
+Activo de prueba	Fuente/estatus	Qué valida	Resultado esperado
+TOWNSROM (FMT_SYS/FMT_DOS compatibles)	Redistribuible bajo sus términos	Ruta de firmware libre	BIOS y entorno base arrancan sin ROM propietaria
+FreeTOWNSOS release/FDIMG.bin	Proyecto abierto	Boot desde floppy	Arranque completo hasta entorno operativo compatible
+FreeTOWNSOS release/HDIMG.h0	Proyecto abierto	Boot desde HDD virtual	Arranque desde HDD sin depender de setup CMOS complejo
+ISO del usuario de Towns OS V1.1 L10 o V2.1 L31	Solo usuario	Compatibilidad con OS real	Llega a shell/menú; coincide con la ruta de tests de Tsugaru
+CD con pistas de audio del usuario en .mds	Solo usuario	CDDA, pregaps y stream de audio	Audio de CD sincronizado y sin saltos al acceder archivos
+Floppy crudo o .d77 en blanco	Generado por el usuario	Save disks, formato, swap	El sistema detecta medio, permite crear/usar disco de usuario
+Manifiesto .cmd con CD+FDD+HDD	Diseño del core	Carga de varios medios	Todos los medios montados desde retro_load_game()
+Round-trip de save state durante CDDA	Interno	Serialización completa	Reanuda con pista, IRQs y estado de medio consistentes
+Tsugaru ya publica una pista útil para pruebas automatizadas: si el desarrollador tiene ciertas imágenes ISO de Towns OS V1.1 L10 o V2.1 L31, puede usar ctest con casos GUI específicos. Aunque esos tests no puedan redistribuirse tal cual con el core, sirven para diseñar una batería equivalente en CI: humo de arranque, detección de mouse, apertura de menú del sistema y validaciones de timing. [43]
+Las pruebas más importantes no son las más glamorosas. Primero, pruebas de arranque frío con CMOS nuevo y con CMOS persistido. Segundo, swap de medios en entidades distintas: CD↔CD, floppy A/B y sesión que cambie de floppy mientras el CD siga montado. Tercero, save state en tres puntos: BIOS, Towns OS idle y juego con CDDA sonando. Cuarto, pruebas de input: teclado puro, mouse relativo y pad. Quinto, comparativas visuales con Tsugaru y MAME para menús, resolución base, scroll y prioridades de sprites/texto. [44]
+Para depurar, yo instrumentaría desde el día uno estas trazas: accesos a 0x0404, 0x0480, 0x04c0-0x04cf (CD), 0x04d8-0x04f8 (audio), IRQ9/11/13/15 y cambios de banco de VRAM/CMOS. MAME ya identifica varias de esas IRQs y rangos de I/O, así que esos puertos son el mapa base para logging. Además, conviene registrar hashes por frame para framebuffer y bloques de audio cuando se reproduzca el mismo contenido bajo la misma semilla/configuración. No se necesita igualdad bit a bit con MAME para aceptar un build, pero sí estabilidad interna entre corridas del mismo core. [45]
+Hay dos tips muy concretos que salen de las fuentes Towns y que vale la pena convertir en checks de regresión. Uno: si el mouse “deriva” o parece saltar, revisar que la ruta primaria esté usando movimientos relativos y que el modo integrado no asuma coordenadas absolutas permanentes. Dos: si un título deja de ver archivos del CD o falla al entrar a una zona tras música de CD, revisar el estado de CDDA y la señalización de cambio de medio/drive de sistema, porque las fuentes documentan exactamente ese tipo de edge case. [46]
+Empaquetado, distribución, licencias, riesgos y mitigaciones
+En empaquetado, el core debería seguir las convenciones de la infraestructura libretro: binario en cores/, archivo .info homónimo, firmware/ROMs en la carpeta system y persistencia en la carpeta de saves. La documentación del API distingue con claridad entre el system directory para BIOS/configuración y el uso histórico —hoy desaconsejado— de esa ruta para saves; otros cores libretro también documentan que el archivo .info debe coincidir en nombre con el binario del core. Para FM Towns, una organización razonable sería system/fmtowns/ para ROM/BIOS y saves/fmtowns/ para CMOS, HDD y discos de usuario persistentes. [47]
+La distribución madura del core no termina en el binario. También exige una receta reproducible dentro de libretro-super, el .info correspondiente, documentación de firmware y, si el proyecto quiere escaneo y metadatos pulidos, una posterior integración con libretro-database. El superrepositorio oficial de libretro se encarga justo de fetch/build/install de múltiples proyectos, y la base de datos oficial explica que RetroArch la usa para validación, nombres uniformes, thumbnails y exploración por metadatos. [48]
+En licencias, la diferencia entre rutas es decisiva. Si el core deriva de Tsugaru, el punto de partida es BSD-3-Clause y eso deja muchísimo aire para integrar libretro-common y distribuir sin la fricción del árbol MAME. Si deriva amplia o sustancialmente de MAME, el proyecto queda bajo el paraguas de GPL-2.0+ a nivel global y además debe respetar la observación del repositorio de MAME sobre el uso del nombre “MAME” como marca registrada. Por otro lado, TOWNSROM y partes de FreeTOWNSOS sí ofrecen componentes redistribuibles, pero eso no autoriza empaquetar ROMs originales ni Towns OS propietario. [49]
+La mitigación legal más limpia es esta: distribuir el core vacío, documentar claramente los firmwares/fontsets admitidos, soportar explícitamente TOWNSROM/FreeTOWNSOS como ruta libre y dejar que el usuario aporte sus dumps legítimos para BIOS/Towns OS comerciales. Esa misma decisión reduce fricción de soporte y evita que el proyecto dependa de una zona gris legal. [34]
+El panorama principal de riesgos y mitigaciones queda así. La priorización y el impacto son una síntesis de ingeniería basada en las fuentes consultadas. [50]
+Riesgo	Impacto	Mitigación recomendada
+Documentación de hardware incompleta o conflictiva	Alto	Tomar Tsugaru y MAME como referencias cruzadas; validar deltas con software real y, si es posible, hardware real
+CD-ROM propietario y semántica BIOS específica	Alto	Empezar en capa BIOS/dispositivo ya modelada por Tsugaru; usar .mds para CDDA; pruebas explícitas de media-change
+Save states inconsistentes por audio/CD	Alto	Posponer soporte hasta serializar CDDA, colas, IRQs y estados de medios
+Variabilidad de modelos Towns/Marty	Alto	Congelar v1 a un conjunto pequeño de modelos; exponer model como core option
+Integración de mouse absoluto/relativo	Medio	Hacer del mouse relativo el default; modo integrado solo como mejora opcional
+Rendimiento en ARM/dispositivos modestos	Medio	Software renderer primero, sin high-fidelity; usar performance level y perfiles de modelo livianos
+Sobrecarga de mantenimiento si se toma MAME	Medio/alto	Usar MAME como oráculo, no como base principal del core dedicado
+Riesgo legal por ROMs/OS propietarios	Alto	No distribuirlos; soportar TOWNSROM y FreeTOWNSOS como ruta libre
+La recomendación final, entonces, es lanzar el proyecto en dos carriles. Carril uno: usar hoy mismo el core de MAME cuando solo se necesite correr FM Towns en RetroArch sin ingeniería adicional. Carril dos: construir un fmtowns_libretro propio sobre Tsugaru CUI, con ruta legal basada en TOWNSROM/FreeTOWNSOS, manifiesto multi-medio y una primera entrega centrada en arranque, video, audio y input, dejando save states completos y variantes tardías de hardware para la segunda fase. Técnicamente, esa es la combinación con mejor relación entre riesgo, mantenibilidad y fidelidad. [51]
+________________________________________
+[1] [2] [16] [25] [26] [28] [30] [31] [36] [42] [43] [44] [46] [49] https://github.com/captainys/TOWNSEMU
+https://github.com/captainys/TOWNSEMU
+[3] [8] [11] [12] [15] [35] [45] https://github.com/mamedev/mame/blob/master/src/mame/fujitsu/fmtowns.cpp
+https://github.com/mamedev/mame/blob/master/src/mame/fujitsu/fmtowns.cpp
+[4] [17] [50] https://ysflight.in.coocan.jp/FM/towns/internalCDROM/YSSCSICD_E.html
+https://ysflight.in.coocan.jp/FM/towns/internalCDROM/YSSCSICD_E.html
+[5] [34] [41] https://github.com/captainys/TOWNSROM
+https://github.com/captainys/TOWNSROM
+[6] [9] [18] [19] [23] [29] [32] [38] https://docs.libretro.com/development/cores/developing-cores/
+https://docs.libretro.com/development/cores/developing-cores/
+[7] [20] [21] [22] [24] [37] [47] https://github.com/libretro/RetroArch/blob/master/libretro-common/include/libretro.h
+https://github.com/libretro/RetroArch/blob/master/libretro-common/include/libretro.h
+[10] https://docs.libretro.com/guides/core-list/
+https://docs.libretro.com/guides/core-list/
+[13] https://archive.org/stream/3FmTowns/FMTOWNS_djvu.txt
+https://archive.org/stream/3FmTowns/FMTOWNS_djvu.txt
+[14] [40] YSFLIGHT.COM
+https://ysflight.in.coocan.jp/FM/towns/unpublished/e.html
+[27] https://github.com/libretro/px68k-libretro
+https://github.com/libretro/px68k-libretro
+[33] https://docs.libretro.com/guides/disc-swapping/
+https://docs.libretro.com/guides/disc-swapping/
+[39] px68k-libretro/Makefile.libretro at master · libretro/px68k-libretro · GitHub
+https://github.com/libretro/px68k-libretro/blob/master/Makefile.libretro
+[48] https://github.com/libretro/libretro-super
+https://github.com/libretro/libretro-super
+[51] https://git.libretro.com/libretro/mame
+https://git.libretro.com/libretro/mame
