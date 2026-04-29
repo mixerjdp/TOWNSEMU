@@ -33,6 +33,7 @@ constexpr unsigned MAX_HEIGHT = 1024;
 constexpr double FPS = 60.0;
 constexpr double SAMPLE_RATE = 44100.0;
 constexpr size_t AUDIO_FRAMES_PER_RUN = static_cast<size_t>(SAMPLE_RATE / FPS);
+constexpr uintmax_t SMALL_BIN_FLOPPY_MAX = 1500u * 1024u;
 
 retro_environment_t environ_cb = nullptr;
 retro_video_refresh_t video_cb = nullptr;
@@ -523,10 +524,32 @@ bool is_cd_extension(const std::string &ext)
 	       "mdf" == ext || "ccd" == ext || "chd" == ext;
 }
 
+bool is_bin_extension(const std::string &ext)
+{
+	return "bin" == ext;
+}
+
 bool is_floppy_extension(const std::string &ext)
 {
 	return "d77" == ext || "d88" == ext || "rdd" == ext ||
 	       "img" == ext || "fdi" == ext;
+}
+
+bool is_harddisk_extension(const std::string &ext)
+{
+	return "h0" == ext;
+}
+
+bool is_small_bin_floppy(const std::string &path)
+{
+	if(false == is_bin_extension(lower_extension(path)))
+	{
+		return false;
+	}
+
+	std::error_code ec;
+	const auto size = std::filesystem::file_size(path, ec);
+	return !ec && 0 < size && size <= SMALL_BIN_FLOPPY_MAX;
 }
 
 std::string resolve_content_path(const std::string &path)
@@ -554,7 +577,7 @@ std::string resolve_content_path(const std::string &path)
 		const auto candidate = entry.path();
 		const auto candidateStem = candidate.stem().string();
 		const auto ext = lower_extension(candidate.string());
-		if((true == is_cd_extension(ext) || true == is_floppy_extension(ext)) &&
+		if((true == is_cd_extension(ext) || true == is_floppy_extension(ext) || true == is_harddisk_extension(ext)) &&
 		   (candidateStem == stem ||
 		    (candidateStem.size() > stem.size() &&
 		     0 == candidateStem.compare(0, stem.size(), stem) &&
@@ -1072,8 +1095,18 @@ public:
 		argv.specialPath.push_back({"${save}", PreferredSavePath()});
 
 		const auto ext = lower_extension(content_path);
+		const bool smallBinFloppy = true == is_small_bin_floppy(content_path);
 		logf(RETRO_LOG_INFO, "Tsugaru libretro: content extension=\"%s\"\n", ext.c_str());
-		if(true == is_cd_extension(ext))
+		logf(RETRO_LOG_INFO, "Tsugaru libretro: content classification candidate=%s\n",
+			true == smallBinFloppy ? "floppy" : (true == is_cd_extension(ext) ? "cd" : (true == is_floppy_extension(ext) ? "floppy" : (true == is_harddisk_extension(ext) ? "harddisk" : "unknown"))));
+		if(true == smallBinFloppy)
+		{
+			argv.fdImgFName[0] = content_path;
+			argv.bootKeyComb = BOOT_KEYCOMB_F0;
+			contentIsFD = true;
+			logf(RETRO_LOG_INFO, "Tsugaru libretro: mounting floppy image=\"%s\"\n", argv.fdImgFName[0].c_str());
+		}
+		else if(true == is_cd_extension(ext))
 		{
 			argv.cdImgFName = content_path;
 			argv.bootKeyComb = BOOT_KEYCOMB_CD;
@@ -1083,12 +1116,23 @@ public:
 			contentIsCD = true;
 			logf(RETRO_LOG_INFO, "Tsugaru libretro: mounting CD image=\"%s\"\n", argv.cdImgFName.c_str());
 		}
-		else if(true == is_floppy_extension(ext) || true != content_path.empty())
+		else if(true == is_harddisk_extension(ext))
+		{
+			argv.scsiImg[0].imageType = TownsStartParameters::SCSIIMAGE_HARDDISK;
+			argv.scsiImg[0].imgFName = content_path;
+			argv.bootKeyComb = BOOT_KEYCOMB_H0;
+			logf(RETRO_LOG_INFO, "Tsugaru libretro: mounting hard disk image=\"%s\"\n", argv.scsiImg[0].imgFName.c_str());
+		}
+		else if(true == is_floppy_extension(ext))
 		{
 			argv.fdImgFName[0] = content_path;
 			argv.bootKeyComb = BOOT_KEYCOMB_F0;
 			contentIsFD = true;
 			logf(RETRO_LOG_INFO, "Tsugaru libretro: mounting floppy image=\"%s\"\n", argv.fdImgFName[0].c_str());
+		}
+		else
+		{
+			logf(RETRO_LOG_WARN, "Tsugaru libretro: no image mounted from content path\n");
 		}
 
 		outside = std::make_unique<LibretroOutsideWorld>();
@@ -1393,7 +1437,7 @@ TSUGARU_RETRO_API void retro_get_system_info(retro_system_info *info)
 	std::memset(info, 0, sizeof(*info));
 	info->library_name = "Tsugaru";
 	info->library_version = "libretro phase3";
-	info->valid_extensions = "cue|bin|iso|mds|mdf|ccd|chd|d77|d88|rdd|img|fdi";
+	info->valid_extensions = "cue|bin|iso|mds|mdf|ccd|chd|d77|d88|rdd|img|fdi|h0";
 	info->need_fullpath = true;
 	info->block_extract = true;
 }
