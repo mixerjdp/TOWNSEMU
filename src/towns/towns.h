@@ -509,6 +509,7 @@ public:
 	//		return balance;
 	//	}
 
+	virtual unsigned int RunOneInstruction(void)=0;
 
 	bool baseClassReady=false;
 	// Will be set to true at the end of the constructor.
@@ -994,7 +995,7 @@ public:
 	}
 
 	/*! Run one instruction and returns the number of clocks passed. */
-	inline unsigned int RunOneInstruction(void)
+	inline unsigned int RunOneInstruction(void) override final
 	{
 		auto clocksPassed=_cpu.RunOneInstruction(mem,io);
 		state.clockBalance+=clocksPassed*1000;

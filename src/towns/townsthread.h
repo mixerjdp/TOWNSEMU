@@ -20,6 +20,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 #include <chrono>
 #include <thread>
 #include <mutex>
+#include <atomic>
 #include <memory>
 
 #include "towns.h"
@@ -30,8 +31,8 @@ class TownsThread
 {
 private:
 	FMTownsCommon *townsPtr;
-	int runMode=RUNMODE_PAUSE;
-	bool returnOnPause=false;
+	std::atomic<int> runMode{1};
+	std::atomic<bool> returnOnPause{false};
 
 	// This will be used for virtually slwoing down CPU when VM is lagging.
 	long long int timeDeficit=0;
@@ -64,23 +65,21 @@ public:
 	void VMStart(FMTownsCommon *townsPtr,Outside_World *outside_world,class TownsUIThread *uiThread);
 	void VMMainLoop(FMTownsTemplate <i486DXDefaultFidelity> *townsPtr,Outside_World *outside_world,Outside_World::Sound *sound,Outside_World::WindowInterface *window,class TownsUIThread *uiThread);
 	void VMMainLoop(FMTownsTemplate <i486DXHighFidelity> *townsPtr,Outside_World *outside_world,Outside_World::Sound *sound,Outside_World::WindowInterface *window,class TownsUIThread *uiThread);
+	bool VMRunSlice(FMTownsCommon *townsPtr,Outside_World *outside_world,Outside_World::Sound *sound,Outside_World::WindowInterface *window,class TownsUIThread *uiThread,bool allowWait,bool updateRealTime);
 	void VMEnd(FMTownsCommon *townsPtr,Outside_World *outside_world,class TownsUIThread *uiThread);
 private:
 	void CheckRenderingTimer(FMTownsCommon &towns,class Outside_World::WindowInterface &window,bool imageNeedsFlip);
 
-	template <class FMTownsClass>
-	void VMMainLoopTemplate(FMTownsClass *townsPtr,Outside_World *outside_world,Outside_World::Sound *sound,Outside_World::WindowInterface *window,class TownsUIThread *uiThread);
+	bool VMMainLoopStep(FMTownsCommon *townsPtr,Outside_World *outside_world,Outside_World::Sound *sound,Outside_World::WindowInterface *window,class TownsUIThread *uiThread,bool allowWait,bool updateRealTime);
 	void AdjustRealTime(FMTownsCommon *townsPtr,long long int cpuTimePassed,std::chrono::time_point<std::chrono::high_resolution_clock> time0,Outside_World *outside_world);
 
 public:
 
 	/*! Returns the current run mode.
-	    The thread that calls this function must take vmLock before calling.
 	*/
 	int GetRunMode(void) const;
 
 	/*! Sets the current run mode.
-	    The thread that calls this function must take vmLock before calling. 
 	*/
 	void SetRunMode(int runModevoid);
 

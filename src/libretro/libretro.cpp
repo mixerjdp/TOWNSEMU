@@ -2,7 +2,10 @@
 
 #include <array>
 #include <cctype>
+#include <chrono>
+#include <cstdarg>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <memory>
@@ -40,6 +43,8 @@ retro_input_state_t input_state_cb = nullptr;
 retro_log_printf_t log_cb = nullptr;
 
 std::array<uint32_t, BASE_WIDTH * BASE_HEIGHT> framebuffer{};
+std::array<std::vector<uint32_t>, 3> video_buffers;
+size_t video_buffer_index = 0;
 std::string content_path;
 std::string system_directory;
 std::string save_directory;
@@ -109,6 +114,48 @@ bool is_floppy_extension(const std::string &ext)
 	       "img" == ext || "fdi" == ext;
 }
 
+std::string resolve_content_path(const std::string &path)
+{
+	if(path.empty() || std::filesystem::exists(path))
+	{
+		return path;
+	}
+
+	const auto requested = std::filesystem::path(path);
+	const auto dir = requested.parent_path();
+	const auto stem = requested.filename().string();
+	if(stem.empty() || false == std::filesystem::is_directory(dir))
+	{
+		return path;
+	}
+
+	std::vector<std::filesystem::path> matches;
+	for(const auto &entry : std::filesystem::directory_iterator(dir))
+	{
+		if(false == entry.is_regular_file())
+		{
+			continue;
+		}
+		const auto candidate = entry.path();
+		const auto candidateStem = candidate.stem().string();
+		const auto ext = lower_extension(candidate.string());
+		if((true == is_cd_extension(ext) || true == is_floppy_extension(ext)) &&
+		   (candidateStem == stem ||
+		    (candidateStem.size() > stem.size() &&
+		     0 == candidateStem.compare(0, stem.size(), stem) &&
+		     ' ' == candidateStem[stem.size()])))
+		{
+			matches.push_back(candidate);
+		}
+	}
+
+	if(1 == matches.size())
+	{
+		return matches.front().string();
+	}
+	return path;
+}
+
 unsigned int cmos_index_from_io(unsigned int ioport)
 {
 	return (ioport - TOWNSIO_CMOS_BASE) / 2;
@@ -119,6 +166,19 @@ void log(enum retro_log_level level, const char *message)
 	if(nullptr != log_cb)
 	{
 		log_cb(level, "%s", message);
+	}
+}
+
+void logf(enum retro_log_level level, const char *fmt, ...)
+{
+	if(nullptr != log_cb)
+	{
+		char text[1024];
+		va_list args;
+		va_start(args, fmt);
+		vsnprintf(text, sizeof(text), fmt, args);
+		va_end(args);
+		log_cb(level, "%s", text);
 	}
 }
 
@@ -134,6 +194,28 @@ void set_environment_defaults()
 
 	bool supportNoGame = true;
 	environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &supportNoGame);
+
+	static const retro_input_descriptor input_descriptors[] =
+	{
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "D-Pad Left" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "D-Pad Right" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,    "D-Pad Up" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN,  "D-Pad Down" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A,      "Button A" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B,      "Button B" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START,  "Start (Run)" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" },
+		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,   "D-Pad Left" },
+		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT,  "D-Pad Right" },
+		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,     "D-Pad Up" },
+		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN,   "D-Pad Down" },
+		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A,       "Button A" },
+		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B,       "Button B" },
+		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START,   "Start (Run)" },
+		{ 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT,  "Select" },
+		{ 0, 0, 0, 0, nullptr },
+	};
+	environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, const_cast<retro_input_descriptor *>(input_descriptors));
 
 	static const retro_variable variables[] =
 	{
@@ -153,6 +235,7 @@ public:
 	unsigned width = BASE_WIDTH;
 	unsigned height = BASE_HEIGHT;
 	bool haveFrame = false;
+	uint64_t frameSerial = 0;
 
 	void Start(void) override {}
 	void Stop(void) override {}
@@ -202,6 +285,7 @@ public:
 		width = img.wid;
 		height = img.hei;
 		haveFrame = true;
+		++frameSerial;
 	}
 
 	bool CopyFrame(std::vector<uint32_t> &out,unsigned &wid,unsigned &hei)
@@ -395,7 +479,6 @@ public:
 	std::unique_ptr<LibretroOutsideWorld> outside;
 	Outside_World::WindowInterface *window = nullptr;
 	Outside_World::Sound *sound = nullptr;
-	std::thread vmThread;
 	bool loaded = false;
 	bool contentIsCD = false;
 	bool contentIsFD = false;
@@ -408,7 +491,13 @@ public:
 	bool load(const retro_game_info *game)
 	{
 		unload();
-		content_path = (nullptr != game && nullptr != game->path) ? game->path : "";
+		const auto requestedPath = (nullptr != game && nullptr != game->path) ? std::string(game->path) : std::string();
+		content_path = resolve_content_path(requestedPath);
+		logf(RETRO_LOG_INFO, "Tsugaru libretro: retro_load_game path=\"%s\"\n", requestedPath.c_str());
+		if(content_path != requestedPath)
+		{
+			logf(RETRO_LOG_WARN, "Tsugaru libretro: resolved content path=\"%s\"\n", content_path.c_str());
+		}
 
 		TownsStartParameters argv;
 		contentIsCD = false;
@@ -429,6 +518,7 @@ public:
 		argv.specialPath.push_back({"${save}", PreferredSavePath()});
 
 		const auto ext = lower_extension(content_path);
+		logf(RETRO_LOG_INFO, "Tsugaru libretro: content extension=\"%s\"\n", ext.c_str());
 		if(true == is_cd_extension(ext))
 		{
 			argv.cdImgFName = content_path;
@@ -437,12 +527,14 @@ public:
 			argv.memSizeInMB = 16;
 			argv.useFPU = true;
 			contentIsCD = true;
+			logf(RETRO_LOG_INFO, "Tsugaru libretro: mounting CD image=\"%s\"\n", argv.cdImgFName.c_str());
 		}
 		else if(true == is_floppy_extension(ext) || true != content_path.empty())
 		{
 			argv.fdImgFName[0] = content_path;
 			argv.bootKeyComb = BOOT_KEYCOMB_F0;
 			contentIsFD = true;
+			logf(RETRO_LOG_INFO, "Tsugaru libretro: mounting floppy image=\"%s\"\n", argv.fdImgFName[0].c_str());
 		}
 
 		outside = std::make_unique<LibretroOutsideWorld>();
@@ -465,26 +557,26 @@ public:
 		townsThread = std::make_unique<TownsThread>();
 		townsThread->SetRunMode(TownsThread::RUNMODE_RUN);
 		uiThread = std::make_unique<LibretroUIThread>();
+		townsThread->VMStart(towns.get(), outside.get(), uiThread.get());
+		sound->Start();
 		window->Start();
 		loaded = true;
-		vmThread = std::thread([this]()
-		{
-			townsThread->VMStart(towns.get(), outside.get(), uiThread.get());
-			townsThread->VMMainLoop(towns.get(), outside.get(), sound, window, uiThread.get());
-			townsThread->VMEnd(towns.get(), outside.get(), uiThread.get());
-		});
 		return true;
 	}
 
 	void unload()
 	{
-		if(nullptr != townsThread)
+		if(loaded && nullptr != townsThread && nullptr != towns && nullptr != outside && nullptr != uiThread)
 		{
-			townsThread->SetRunMode(TownsThread::RUNMODE_EXIT);
-		}
-		if(vmThread.joinable())
-		{
-			vmThread.join();
+			if(nullptr != sound)
+			{
+				sound->Stop();
+			}
+			if(nullptr != window)
+			{
+				window->NotifyVMClosed();
+			}
+			townsThread->VMEnd(towns.get(), outside.get(), uiThread.get());
 		}
 		if(nullptr != window)
 		{
@@ -519,6 +611,44 @@ public:
 			return outside->window->CopyFrame(out, wid, hei);
 		}
 		return false;
+	}
+
+	bool Advance()
+	{
+		if(false == loaded || nullptr == townsThread || nullptr == towns || nullptr == outside || nullptr == window || nullptr == sound || nullptr == uiThread)
+		{
+			return false;
+		}
+
+		auto *libWindow = static_cast<LibretroWindow *>(window);
+		const uint64_t startSerial = libWindow->frameSerial;
+		const auto startWall = std::chrono::steady_clock::now();
+		const auto wallBudget = (true == libWindow->haveFrame ? std::chrono::milliseconds(15) : std::chrono::milliseconds(45));
+		const auto startTownsTime = towns->state.townsTime;
+		const auto targetTownsTime = startTownsTime + 1000000000ULL / static_cast<unsigned long long>(FPS);
+		const unsigned maxSlices = (TownsThread::RUNMODE_RUN == townsThread->GetRunMode() ? 24u : 1u);
+		bool terminate = false;
+		for(unsigned slice = 0; slice < maxSlices && false == terminate && libWindow->frameSerial == startSerial; ++slice)
+		{
+			terminate = townsThread->VMRunSlice(towns.get(), outside.get(), sound, window, uiThread.get(), false, false);
+			window->Interval();
+			if(targetTownsTime <= towns->state.townsTime)
+			{
+				break;
+			}
+			if(wallBudget <= std::chrono::steady_clock::now() - startWall)
+			{
+				break;
+			}
+		}
+
+		if(true == terminate)
+		{
+			unload();
+			return false;
+		}
+
+		return true;
 	}
 
 	size_t PopAudio(int16_t *dst,size_t frames)
@@ -593,7 +723,10 @@ void push_video()
 	unsigned wid = 0, hei = 0;
 	if(true == runtime.CopyFrame(frame, wid, hei) && 0 < wid && 0 < hei)
 	{
-		video_cb(frame.data(), wid, hei, wid * sizeof(uint32_t));
+		video_buffer_index = (video_buffer_index + 1) % video_buffers.size();
+		auto &buffer = video_buffers[video_buffer_index];
+		buffer = std::move(frame);
+		video_cb(buffer.data(), wid, hei, wid * sizeof(uint32_t));
 	}
 	else
 	{
@@ -772,7 +905,14 @@ TSUGARU_RETRO_API unsigned retro_get_region(void)
 TSUGARU_RETRO_API void retro_run(void)
 {
 	poll_input();
-	draw_placeholder_frame();
+	if(true == runtime.loaded)
+	{
+		runtime.Advance();
+	}
+	else
+	{
+		draw_placeholder_frame();
+	}
 	push_video();
 	push_audio();
 	++frame_counter;

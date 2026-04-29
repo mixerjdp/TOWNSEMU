@@ -21,7 +21,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 
 TownsThread::TownsThread(void)
 {
-	runMode=RUNMODE_PAUSE;
+	runMode.store(RUNMODE_PAUSE);
 }
 
 void TownsThread::VMStart(FMTownsCommon *townsPtr,Outside_World *outside_world,class TownsUIThread *uiThread)
@@ -54,7 +54,10 @@ void TownsThread::VMMainLoop(
     Outside_World::WindowInterface *window,
     class TownsUIThread *uiThread)
 {
-	VMMainLoopTemplate(townsPtr,outside_world,sound,window,uiThread);
+	sound->Start();
+	VMMainLoopStep(townsPtr,outside_world,sound,window,uiThread,true,true);
+	sound->Stop();
+	window->NotifyVMClosed();
 }
 void TownsThread::VMMainLoop(
     FMTownsTemplate <i486DXHighFidelity>  *townsPtr,
@@ -63,38 +66,52 @@ void TownsThread::VMMainLoop(
     Outside_World::WindowInterface *window,
     class TownsUIThread *uiThread)
 {
-	VMMainLoopTemplate(townsPtr,outside_world,sound,window,uiThread);
+	sound->Start();
+	VMMainLoopStep(townsPtr,outside_world,sound,window,uiThread,true,true);
+	sound->Stop();
+	window->NotifyVMClosed();
 }
 
-template <class FMTownsClass>
-void TownsThread::VMMainLoopTemplate(
-    FMTownsClass *townsPtr,
+bool TownsThread::VMRunSlice(
+    FMTownsCommon *townsPtr,
     Outside_World *outside_world,
     Outside_World::Sound *sound,
     Outside_World::WindowInterface *window,
-    class TownsUIThread *uiThread)
+    class TownsUIThread *uiThread,
+    bool allowWait,
+    bool updateRealTime)
+{
+	return VMMainLoopStep(townsPtr,outside_world,sound,window,uiThread,allowWait,updateRealTime);
+}
+
+bool TownsThread::VMMainLoopStep(
+    FMTownsCommon *townsPtr,
+    Outside_World *outside_world,
+    Outside_World::Sound *sound,
+    Outside_World::WindowInterface *window,
+    class TownsUIThread *uiThread,
+    bool allowWait,
+    bool updateRealTime)
 {
 	townsPtr->sound.SetOutsideWorld(sound);
 	townsPtr->sound.SetCDROMPointer(&townsPtr->cdrom);
 	townsPtr->sound.SetSCSIPointer(&townsPtr->scsi);
-	sound->Start();
-
 	TownsRender render;
 	bool terminate=false;
-	for(;true!=terminate;)
+	for(unsigned long long slice=0; true!=terminate && (true==allowWait || 0==slice); ++slice)
 	{
 		auto realTime0=std::chrono::high_resolution_clock::now();
 		auto townsTime0=townsPtr->state.townsTime;
 
 		int runModeCopy=0;
 
-		runModeCopy=runMode;
+		runModeCopy=runMode.load();
 
 		bool clockTicking=false;  // Will be made true if VM is running.
 
 		townsPtr->var.justLoadedState=false;
 
-		switch(runMode)
+		switch(runModeCopy)
 		{
 		case RUNMODE_PAUSE:
 			{
@@ -112,7 +129,7 @@ void TownsThread::VMMainLoopTemplate(
 				outside_world->DevicePolling(*townsPtr);
 				if(true==outside_world->PauseKeyPressed())
 				{
-					runMode=RUNMODE_RUN;
+					runMode.store(RUNMODE_RUN);
 					townsPtr->SetDebugBreakFlag(false);
 				}
 				townsPtr->sound.ProcessSilence();
@@ -209,12 +226,12 @@ void TownsThread::VMMainLoopTemplate(
 								this->SetRunMode(RUNMODE_RUN);
 							}
 							else
-							{
-								std::cout << "Passed " << townsPtr->debugger.lastBreakPointInfo.passedCount << " times." << std::endl;
-								PrintStatus(*townsPtr);
-								std::cout << ">";
-								runMode=RUNMODE_PAUSE;
-							}
+						{
+							std::cout << "Passed " << townsPtr->debugger.lastBreakPointInfo.passedCount << " times." << std::endl;
+							PrintStatus(*townsPtr);
+							std::cout << ">";
+							runMode.store(RUNMODE_PAUSE);
+						}
 							break;
 						}
 					}
@@ -239,7 +256,7 @@ void TownsThread::VMMainLoopTemplate(
 					// Must change to RUNMODE_PAUSE here.
 					PrintStatus(*townsPtr);
 					std::cout << ">";
-					runMode=RUNMODE_PAUSE;
+						runMode.store(RUNMODE_PAUSE);
 				}
 			}
 			townsPtr->eventLog.Interval(*townsPtr);
@@ -247,7 +264,7 @@ void TownsThread::VMMainLoopTemplate(
 			{
 				PrintStatus(*townsPtr);
 				std::cout << ">";
-				runMode=RUNMODE_PAUSE;
+					runMode.store(RUNMODE_PAUSE);
 			}
 			break;
 		case RUNMODE_ONE_INSTRUCTION:
@@ -261,7 +278,7 @@ void TownsThread::VMMainLoopTemplate(
 			}
 			PrintStatus(*townsPtr);
 			std::cout << ">";
-			runMode=RUNMODE_PAUSE;
+				runMode.store(RUNMODE_PAUSE);
 			break;
 		case RUNMODE_EXIT:
 			terminate=true;
@@ -271,22 +288,22 @@ void TownsThread::VMMainLoopTemplate(
 			std::cout << "Undefined VM RunMode!" << std::endl;
 			break;
 		}
-		if(true==outside_world->closeWindow && RUNMODE_EXIT!=runMode)
+		if(true==outside_world->closeWindow && RUNMODE_EXIT!=runMode.load())
 		{
 			std::cout << "Window closed.\n";
-			runMode=RUNMODE_EXIT;
+			runMode.store(RUNMODE_EXIT);
 		}
 		if(true==townsPtr->var.powerOff)
 		{
 			if(true!=townsPtr->var.pauseOnPowerOff)
 			{
-				runMode=RUNMODE_EXIT;
+				runMode.store(RUNMODE_EXIT);
 			}
-			else if(RUNMODE_PAUSE!=runMode)
+			else if(RUNMODE_PAUSE!=runMode.load())
 			{
 				PrintStatus(*townsPtr);
 				std::cout << ">";
-				runMode=RUNMODE_PAUSE;
+				runMode.store(RUNMODE_PAUSE);
 			}
 		}
 		if(townsPtr->state.nextSecondInTownsTime<=townsPtr->state.townsTime)
@@ -307,8 +324,11 @@ void TownsThread::VMMainLoopTemplate(
 		if(RUNMODE_PAUSE==runModeCopy)
 		{
 			townsPtr->fdc.SaveModifiedDiskImages();
-			std::this_thread::sleep_for(std::chrono::milliseconds(10));
-			if(true==returnOnPause)
+			if(true==allowWait)
+			{
+				std::this_thread::sleep_for(std::chrono::milliseconds(10));
+			}
+			if(true==returnOnPause.load())
 			{
 				break;
 			}
@@ -320,14 +340,13 @@ void TownsThread::VMMainLoopTemplate(
 		if(true==townsPtr->var.justLoadedState)
 		{
 		}
-		else if(true==clockTicking)
+		else if(true==clockTicking && true==updateRealTime)
 		{
 			AdjustRealTime(townsPtr,townsPtr->state.townsTime-townsTime0,realTime0,outside_world);
 		}
 	}
 
-	sound->Stop();
-	window->NotifyVMClosed();
+	return terminate;
 }
 void TownsThread::VMEnd(FMTownsCommon *townsPtr,Outside_World *outside_world,class TownsUIThread *uiThread)
 {
@@ -453,16 +472,16 @@ void TownsThread::AdjustRealTime(FMTownsCommon *townsPtr,long long int cpuTimePa
 
 int TownsThread::GetRunMode(void) const
 {
-	return runMode;
+	return runMode.load();
 }
 void TownsThread::SetRunMode(int nextRunMode)
 {
-	runMode=nextRunMode;
+	runMode.store(nextRunMode);
 }
 
 void TownsThread::SetReturnOnPause(bool flag)
 {
-	returnOnPause=flag;
+	returnOnPause.store(flag);
 }
 
 void TownsThread::PrintStatus(const FMTownsCommon &towns) const
