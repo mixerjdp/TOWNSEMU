@@ -571,7 +571,7 @@ bool is_bin_extension(const std::string &ext)
 bool is_floppy_extension(const std::string &ext)
 {
 	return "d77" == ext || "d88" == ext || "rdd" == ext ||
-	       "img" == ext || "fdi" == ext;
+	       "img" == ext || "fdi" == ext || "hdm" == ext;
 }
 
 bool is_harddisk_extension(const std::string &ext)
@@ -1804,7 +1804,7 @@ TSUGARU_RETRO_API void retro_get_system_info(retro_system_info *info)
 	std::memset(info, 0, sizeof(*info));
 	info->library_name = "Tsugaru";
 	info->library_version = "libretro phase3";
-	info->valid_extensions = "cue|bin|iso|mds|mdf|ccd|chd|d77|d88|rdd|img|fdi|h0|m3u";
+	info->valid_extensions = "cue|bin|iso|mds|mdf|ccd|chd|d77|d88|rdd|img|fdi|hdm|h0|m3u";
 	info->need_fullpath = true;
 	info->block_extract = true;
 }
