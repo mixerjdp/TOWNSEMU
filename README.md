@@ -1,78 +1,86 @@
 # Tsugaru libretro
 
-Tsugaru libretro es un fork de **Tsugaru**, el emulador de FM Towns / FM Towns Marty de CaptainYS, adaptado para usarse como core de **RetroArch / libretro**.
+Tsugaru libretro is a fork of **Tsugaru**, the FM Towns / FM Towns Marty emulator by CaptainYS, adapted to run as a **RetroArch / libretro** core.
 
-El objetivo de este fork es ofrecer un core eficiente, estable y facil de instalar para ejecutar contenido de FM Towns desde RetroArch, usando el backend de Tsugaru como base y evitando redistribuir BIOS o ROMs propietarias.
+The goal of this fork is to provide a fast, stable, and easy-to-install FM Towns core for RetroArch, while keeping the Tsugaru backend as the foundation and avoiding redistribution of proprietary BIOS or ROM files.
 
-## Que incluye este proyecto
+## Core features
 
-- Core libretro para FM Towns.
-- Soporte para contenido CD y floppy segun extension.
-- Archivo `.info` para RetroArch.
-- Scripts de compilacion para 32 bits y 64 bits.
+- FM Towns / FM Towns Marty libretro core.
+- CD media support, including `CHD`.
+- Support for floppy and disk images by extension.
+- RetroArch `.info` metadata file.
+- 32-bit and 64-bit build scripts.
+- No BIOS redistribution in the release.
 
-## Que no incluye
+## What is included
 
-- BIOS o ROMs del sistema.
-- Contenido comercial del usuario.
-- Paquetes de software de terceros no redistribuibles.
+- The libretro core binaries.
+- The `.info` file for RetroArch.
+- Build scripts for Win32 and Win64.
 
-## Requisitos
+## What is not included
 
-Para usar el core necesitas:
+- System BIOS or ROM images.
+- Commercial game content.
+- Third-party software packages that cannot be redistributed.
 
-- RetroArch instalado.
-- El core `tsugaru_libretro.dll` correspondiente a tu arquitectura.
-- El archivo `tsugaru_libretro.info`.
-- BIOS / ROMs legales del sistema FM Towns.
+## Requirements
 
-## Instalacion del core
+To use the core you need:
 
-### 64 bits
+- RetroArch installed.
+- The `tsugaru_libretro.dll` core for your architecture.
+- The `tsugaru_libretro.info` file.
+- Legal FM Towns BIOS / ROM files.
 
-Copiar:
+## Install the core
+
+### 64-bit
+
+Copy:
 
 ```text
 tsugaru_libretro.dll
 ```
 
-en:
+into your RetroArch cores directory, for example:
 
 ```text
-D:\Emulation\Emulators\RetroArch\cores\
+RetroArch/cores/
 ```
 
-### 32 bits
+### 32-bit
 
-Si usas una instalacion de RetroArch de 32 bits, copia el mismo archivo compilado para Win32 dentro de la carpeta `cores` de esa instalacion.
+If you use a 32-bit RetroArch installation, copy the Win32 build of the same core into that installation's `cores` directory.
 
-## Instalacion del archivo .info
+## Install the `.info` file
 
-Copiar:
+Copy:
 
 ```text
 tsugaru_libretro.info
 ```
 
-en:
+into your RetroArch info directory, for example:
 
 ```text
-D:\Emulation\Emulators\RetroArch\info\
+RetroArch/info/
 ```
 
-RetroArch usa este archivo para mostrar el nombre correcto del core y para reconocer sus extensiones compatibles.
+RetroArch uses this file to show the core name and to recognize the supported content extensions.
 
-## Instalacion de BIOS y ROMs del sistema
+## Install BIOS and ROM files
 
-El core busca los archivos de sistema en la carpeta `system` de RetroArch. La ruta recomendada es:
+Place the system files in RetroArch's `system` directory. The recommended layout is:
 
 ```text
-D:\Emulation\Emulators\RetroArch\system\fmtowns\
+RetroArch/system/fmtowns/
 ```
 
-Si esa subcarpeta no existe, el core tambien puede caer a `system` directamente, pero la ruta recomendada es `system\\fmtowns`.
+If your setup does not use a `fmtowns` subfolder, the core can also fall back to the top-level `system` directory.
 
-Archivos tipicos de BIOS / ROM del sistema:
+Typical BIOS / ROM filenames include:
 
 ```text
 FMT_SYS.ROM
@@ -81,52 +89,52 @@ FMT_FNT.ROM
 FMT_DIC.ROM
 ```
 
-Los nombres exactos pueden variar segun el set de ROMs compatible que uses, pero la idea es la misma: mantener los firmwares en `system`, no dentro de `cores`.
+Exact filenames can vary depending on the ROM set you use, but the rule is the same: keep firmware under `system`, not under `cores`.
 
-## Contenido soportado
+## Supported content
 
-El core acepta medios de CD y floppy por extension. Las extensiones soportadas actualmente incluyen:
+The core accepts FM Towns content by file extension. Current supported extensions are:
 
 ```text
 cue, bin, iso, mds, mdf, ccd, chd, d77, d88, rdd, img, fdi, hdm, h0, m3u
 ```
 
-Notas:
+Notes:
 
-- Para CD, el core monta medios como `cue`, `bin`, `iso`, `mds`, `mdf`, `ccd` y `chd`.
-- Para floppy, acepta `d77`, `d88`, `rdd`, `img`, `fdi`, `hdm` y `h0`.
-- `m3u` puede usarse para listas de medios segun el flujo que maneje RetroArch.
+- CD media support includes `cue`, `bin`, `iso`, `mds`, `mdf`, `ccd`, and `chd`.
+- Floppy and disk image support includes `d77`, `d88`, `rdd`, `img`, `fdi`, `hdm`, and `h0`.
+- `m3u` can be used for multi-disc content lists when supported by your RetroArch workflow.
 
-## Como ejecutar
+## How to run
 
-1. Abre RetroArch.
-2. Carga el core `Tsugaru`.
-3. Carga un contenido compatible.
-4. Si el juego necesita BIOS, verifica que los archivos esten en `system\\fmtowns`.
+1. Start RetroArch.
+2. Load the `Tsugaru` core.
+3. Load a supported FM Towns image.
+4. If the game needs BIOS files, confirm they are placed under `RetroArch/system/fmtowns/`.
 
-## Compilacion local
+## Local build
 
-Para compilar el core desde este repositorio:
+Build scripts are provided for both architectures:
 
 ```bat
 buildlibretro32.bat
 buildlibretro64.bat
 ```
 
-El script de 64 bits copia el DLL resultante a la carpeta `cores` de RetroArch.
+The 64-bit script copies the resulting DLL into the RetroArch `cores` directory.
 
 ## Release v1.00
 
-La release `v1.00` publica solo estos archivos:
+The `v1.00` release publishes only these files:
 
 - `tsugaru_libretro_32bit.dll`
 - `tsugaru_libretro_64bit.dll`
 - `tsugaru_libretro.info`
 
-No se incluyen BIOS en la release.
+No BIOS files are included in the release.
 
-## Agradecimientos
+## Thanks
 
-- CaptainYS y los contribuidores de Tsugaru.
-- La comunidad de libretro por la documentacion y el ecosistema de cores.
+- CaptainYS and the Tsugaru contributors.
+- The libretro community for the documentation and the wider core ecosystem.
 
