@@ -1073,6 +1073,23 @@ public:
 			}
 			return 0;
 		};
+		struct StickState
+		{
+			int x = 0;
+			int y = 0;
+		};
+		auto read_stick = [&](unsigned port, unsigned index) -> StickState
+		{
+			const int x = read_axis(port, index, RETRO_DEVICE_ID_ANALOG_X);
+			const int y = read_axis(port, index, RETRO_DEVICE_ID_ANALOG_Y);
+			constexpr int deadzone = 9000;
+			const int64_t radiusSq = static_cast<int64_t>(x) * x + static_cast<int64_t>(y) * y;
+			if(radiusSq <= static_cast<int64_t>(deadzone) * deadzone)
+			{
+				return {};
+			}
+			return {x / 256, y / 256};
+		};
 
 		unsigned mousePort = 2;
 		for(unsigned port = 0; port < 2; ++port)
@@ -1133,10 +1150,12 @@ public:
 
 			if(true == IsCyberStickPortType(portType))
 			{
-				const bool left = read_button(port, RETRO_DEVICE_ID_JOYPAD_LEFT) || read_axis_with_fallback(port, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_RIGHT) < 0;
-				const bool right = read_button(port, RETRO_DEVICE_ID_JOYPAD_RIGHT) || read_axis_with_fallback(port, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_RIGHT) > 0;
-				const bool up = read_button(port, RETRO_DEVICE_ID_JOYPAD_UP) || read_axis_with_fallback(port, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN) < 0;
-				const bool down = read_button(port, RETRO_DEVICE_ID_JOYPAD_DOWN) || read_axis_with_fallback(port, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN) > 0;
+				const auto leftStick = read_stick(port, RETRO_DEVICE_INDEX_ANALOG_LEFT);
+				const auto rightStick = read_stick(port, RETRO_DEVICE_INDEX_ANALOG_RIGHT);
+				const bool left = read_button(port, RETRO_DEVICE_ID_JOYPAD_LEFT) || leftStick.x < 0;
+				const bool right = read_button(port, RETRO_DEVICE_ID_JOYPAD_RIGHT) || leftStick.x > 0;
+				const bool up = read_button(port, RETRO_DEVICE_ID_JOYPAD_UP) || leftStick.y < 0;
+				const bool down = read_button(port, RETRO_DEVICE_ID_JOYPAD_DOWN) || leftStick.y > 0;
 				unsigned int trig = 0;
 				auto setTrig = [&](unsigned bit, unsigned id)
 				{
@@ -1146,10 +1165,10 @@ public:
 					}
 				};
 
-				const int x = read_axis_with_fallback(port, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_RIGHT);
-				const int y = read_axis_with_fallback(port, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN);
-				const int z = read_axis(port, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X) / 256;
-				const int w = read_axis(port, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y) / 256;
+				const int x = leftStick.x;
+				const int y = leftStick.y;
+				const int z = rightStick.x;
+				const int w = rightStick.y;
 
 				setTrig(11, RETRO_DEVICE_ID_JOYPAD_A);
 				setTrig(10, RETRO_DEVICE_ID_JOYPAD_B);
@@ -1168,18 +1187,20 @@ public:
 			}
 			else if(true == IsLibbleRabblePortType(portType))
 			{
-				const bool left = read_button(port, RETRO_DEVICE_ID_JOYPAD_LEFT) || read_axis_with_fallback(port, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_RIGHT) < 0;
-				const bool right = read_button(port, RETRO_DEVICE_ID_JOYPAD_RIGHT) || read_axis_with_fallback(port, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_RIGHT) > 0;
-				const bool up = read_button(port, RETRO_DEVICE_ID_JOYPAD_UP) || read_axis_with_fallback(port, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN) < 0;
-				const bool down = read_button(port, RETRO_DEVICE_ID_JOYPAD_DOWN) || read_axis_with_fallback(port, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN) > 0;
+				const auto leftStick = read_stick(port, RETRO_DEVICE_INDEX_ANALOG_LEFT);
+				const auto rightStick = read_stick(port, RETRO_DEVICE_INDEX_ANALOG_RIGHT);
+				const bool left = read_button(port, RETRO_DEVICE_ID_JOYPAD_LEFT) || leftStick.x < 0;
+				const bool right = read_button(port, RETRO_DEVICE_ID_JOYPAD_RIGHT) || leftStick.x > 0;
+				const bool up = read_button(port, RETRO_DEVICE_ID_JOYPAD_UP) || leftStick.y < 0;
+				const bool down = read_button(port, RETRO_DEVICE_ID_JOYPAD_DOWN) || leftStick.y > 0;
 				const bool a = read_button(port, RETRO_DEVICE_ID_JOYPAD_A);
 				const bool b = read_button(port, RETRO_DEVICE_ID_JOYPAD_B);
 				const bool run = read_button(port, RETRO_DEVICE_ID_JOYPAD_START);
 				const bool pause = read_button(port, RETRO_DEVICE_ID_JOYPAD_SELECT);
-				const bool left2 = read_button(port, RETRO_DEVICE_ID_JOYPAD_X) || read_axis(port, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X) < -32;
-				const bool right2 = read_button(port, RETRO_DEVICE_ID_JOYPAD_Y) || read_axis(port, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X) > 32;
-				const bool up2 = read_button(port, RETRO_DEVICE_ID_JOYPAD_L) || read_axis(port, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y) < -32;
-				const bool down2 = read_button(port, RETRO_DEVICE_ID_JOYPAD_R) || read_axis(port, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y) > 32;
+				const bool left2 = read_button(port, RETRO_DEVICE_ID_JOYPAD_X) || rightStick.x < 0;
+				const bool right2 = read_button(port, RETRO_DEVICE_ID_JOYPAD_Y) || rightStick.x > 0;
+				const bool up2 = read_button(port, RETRO_DEVICE_ID_JOYPAD_L) || rightStick.y < 0;
+				const bool down2 = read_button(port, RETRO_DEVICE_ID_JOYPAD_R) || rightStick.y > 0;
 
 				towns.SetLibbleRabblePadState(
 					a,
@@ -1219,10 +1240,11 @@ public:
 			}
 			else
 			{
-				const bool left = read_button(port, RETRO_DEVICE_ID_JOYPAD_LEFT) || read_axis_with_fallback(port, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_RIGHT) < 0;
-				const bool right = read_button(port, RETRO_DEVICE_ID_JOYPAD_RIGHT) || read_axis_with_fallback(port, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_RIGHT) > 0;
-				const bool up = read_button(port, RETRO_DEVICE_ID_JOYPAD_UP) || read_axis_with_fallback(port, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN) < 0;
-				const bool down = read_button(port, RETRO_DEVICE_ID_JOYPAD_DOWN) || read_axis_with_fallback(port, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN) > 0;
+				const auto leftStick = read_stick(port, RETRO_DEVICE_INDEX_ANALOG_LEFT);
+				const bool left = read_button(port, RETRO_DEVICE_ID_JOYPAD_LEFT) || leftStick.x < 0;
+				const bool right = read_button(port, RETRO_DEVICE_ID_JOYPAD_RIGHT) || leftStick.x > 0;
+				const bool up = read_button(port, RETRO_DEVICE_ID_JOYPAD_UP) || leftStick.y < 0;
+				const bool down = read_button(port, RETRO_DEVICE_ID_JOYPAD_DOWN) || leftStick.y > 0;
 				const bool a = read_button(port, RETRO_DEVICE_ID_JOYPAD_A);
 				const bool b = read_button(port, RETRO_DEVICE_ID_JOYPAD_B);
 				const bool run = read_button(port, RETRO_DEVICE_ID_JOYPAD_START);
