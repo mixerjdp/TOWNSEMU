@@ -1348,6 +1348,8 @@ public:
 	}
 };
 
+bool ApplyCoreOptions(TownsStartParameters *argv,bool force);
+
 class Runtime
 {
 public:
@@ -1392,48 +1394,7 @@ public:
 		argv.memSizeInMB = 6;
 		argv.keyboardMode = TOWNS_KEYBOARD_MODE_DIRECT;
 
-		mouse_mode_integrated = false;
-		if(environ_cb)
-		{
-			retro_variable var;
-			var.key = "tsugaru_mouse_mode";
-			if(environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-			{
-				mouse_mode_integrated = (0 == std::strcmp(var.value, "integrated"));
-				logf(RETRO_LOG_INFO, "Tsugaru libretro: Mouse mode=\"%s\"\n", var.value);
-			}
-		}
-		ResetMouseTracking();
-		
-		// Read port type options
-		retro_variable var;
-		var.key = "tsugaru_port0_type";
-		if (environ_cb && environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-		{
-			port0_type = StringToGamePortEmu(var.value);
-			argv.gamePort[0] = port0_type;
-			logf(RETRO_LOG_INFO, "Tsugaru libretro: Port 0 type=\"%s\" (%u)\n", var.value, port0_type);
-		}
-		else
-		{
-			port0_type = TOWNS_GAMEPORTEMU_PHYSICAL0;
-			argv.gamePort[0] = port0_type;
-		}
-		
-		var.key = "tsugaru_port1_type";
-		if (environ_cb && environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-		{
-			port1_type = StringToGamePortEmu(var.value);
-			argv.gamePort[1] = port1_type;
-			logf(RETRO_LOG_INFO, "Tsugaru libretro: Port 1 type=\"%s\" (%u)\n", var.value, port1_type);
-		}
-		else
-		{
-			port1_type = TOWNS_GAMEPORTEMU_MOUSE;
-			argv.gamePort[1] = port1_type;
-		}
-
-		RefreshInputDescriptors();
+		ApplyCoreOptions(&argv,true);
 		
 		argv.specialPath.push_back({"${system}", system_directory});
 		argv.specialPath.push_back({"${save}", PreferredSavePath()});
@@ -1731,6 +1692,93 @@ public:
 
 Runtime runtime;
 
+bool ApplyCoreOptions(TownsStartParameters *argv,bool force)
+{
+	bool variablesUpdated = force;
+	if(false == force)
+	{
+		if(nullptr == environ_cb ||
+		   false == environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &variablesUpdated) ||
+		   false == variablesUpdated)
+		{
+			return false;
+		}
+	}
+
+	bool newMouseModeIntegrated = false;
+	unsigned int newPort0 = TOWNS_GAMEPORTEMU_PHYSICAL0;
+	unsigned int newPort1 = TOWNS_GAMEPORTEMU_MOUSE;
+
+	if(nullptr != environ_cb)
+	{
+		retro_variable var{};
+
+		var.key = "tsugaru_mouse_mode";
+		if(true == environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && nullptr != var.value)
+		{
+			newMouseModeIntegrated = (0 == std::strcmp(var.value, "integrated"));
+			logf(RETRO_LOG_INFO, "Tsugaru libretro: Mouse mode=\"%s\"\n", var.value);
+		}
+
+		var.key = "tsugaru_port0_type";
+		if(true == environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && nullptr != var.value)
+		{
+			newPort0 = StringToGamePortEmu(var.value);
+			logf(RETRO_LOG_INFO, "Tsugaru libretro: Port 0 type=\"%s\" (%u)\n", var.value, newPort0);
+		}
+
+		var.key = "tsugaru_port1_type";
+		if(true == environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && nullptr != var.value)
+		{
+			newPort1 = StringToGamePortEmu(var.value);
+			logf(RETRO_LOG_INFO, "Tsugaru libretro: Port 1 type=\"%s\" (%u)\n", var.value, newPort1);
+		}
+	}
+
+	const bool mouseModeChanged = (mouse_mode_integrated != newMouseModeIntegrated);
+	const bool port0Changed = (port0_type != newPort0);
+	const bool port1Changed = (port1_type != newPort1);
+
+	mouse_mode_integrated = newMouseModeIntegrated;
+	port0_type = newPort0;
+	port1_type = newPort1;
+
+	if(nullptr != argv)
+	{
+		argv->gamePort[0] = port0_type;
+		argv->gamePort[1] = port1_type;
+	}
+
+	if(true == force || true == mouseModeChanged || true == port0Changed || true == port1Changed)
+	{
+		ResetMouseTracking();
+		if(true == runtime.loaded && nullptr != runtime.towns)
+		{
+			runtime.towns->gameport.state.Reset();
+			runtime.towns->gameport.state.ports[0].device = TownsGamePort::EmulationTypeToDeviceType(port0_type);
+			runtime.towns->gameport.state.ports[1].device = TownsGamePort::EmulationTypeToDeviceType(port1_type);
+			runtime.towns->SetMouseButtonState(false,false);
+			if(nullptr != runtime.outside)
+			{
+				runtime.outside->gamePort[0] = port0_type;
+				runtime.outside->gamePort[1] = port1_type;
+			}
+		}
+		RefreshInputDescriptors();
+		if(true == force)
+		{
+			log(RETRO_LOG_INFO, "Tsugaru libretro: core input options applied on load.\n");
+		}
+		else
+		{
+			log(RETRO_LOG_INFO, "Tsugaru libretro: core input options updated in hot path.\n");
+		}
+		return true;
+	}
+
+	return false;
+}
+
 void retro_keyboard_event(bool down, unsigned keycode, uint32_t, uint16_t)
 {
 	const unsigned char townsKey = RetroKeyToTownsKey(keycode);
@@ -1986,6 +2034,7 @@ TSUGARU_RETRO_API unsigned retro_get_region(void)
 
 TSUGARU_RETRO_API void retro_run(void)
 {
+	ApplyCoreOptions(nullptr,false);
 	poll_input();
 	if(true == runtime.loaded)
 	{

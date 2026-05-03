@@ -631,7 +631,7 @@ void TownsGamePort::Port::SetGamePadState(bool Abutton,bool Bbutton,bool left,bo
 	{
 		autoShotBaseTime[0]=townsTime;
 	}
-	if(true!=this->button[1] && this->button[1]!=Abutton)
+	if(true!=this->button[1] && this->button[1]!=Bbutton)
 	{
 		autoShotBaseTime[1]=townsTime;
 	}
@@ -746,6 +746,7 @@ void TownsGamePort::State::Reset(void)
 	for(auto &p : ports)
 	{
 		p.state=0;
+		p.TRIG=3;
 		p.button[0]=false;
 		p.button[1]=false;
 		p.run=false;
@@ -754,9 +755,27 @@ void TownsGamePort::State::Reset(void)
 		p.right=false;
 		p.up=false;
 		p.down=false;
+		p.zoom=false;
+		p.left2=false;
+		p.right2=false;
+		p.up2=false;
+		p.down2=false;
 		p.COM=false;
 		p.mouseMotion.Set(0,0);
+		p.mouseMotionCopy.Set(0,0);
+		p.zAxis=0;
+		p.wAxis=0;
+		p.zAxisCopy=0;
+		p.wAxisCopy=0;
+		p.trig=0;
 		p.lastAccessTime=0;
+		p.lastStateChangeTime=0;
+		p.lastButtonRead[0]=false;
+		p.lastButtonRead[1]=false;
+		p.lastButtonDownTime[0]=0;
+		p.lastButtonDownTime[1]=0;
+		p.autoShotBaseTime[0]=0;
+		p.autoShotBaseTime[1]=0;
 	}
 }
 
